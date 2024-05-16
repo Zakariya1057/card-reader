@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { Image, StyleSheet, View, Text, Button, TouchableOpacity, ScrollView } from 'react-native';
+import { Image, StyleSheet, View, Text, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import NfcManager, { NfcTech } from 'react-native-nfc-manager';
 import emv from 'node-emv';
 
 export default function HomeScreen() {
     const [cardData, setCardData] = useState(null);
-    const [tech, setTech] = useState(NfcTech.IsoDep);
+    const [loading, setLoading] = useState(false);
 
     const commands = {
         visa: [
@@ -23,18 +23,34 @@ export default function HomeScreen() {
         ]
     };
 
-    const readCreditCard = async (type) => {
+    const readCreditCard = async () => {
+        if (loading) return; // Prevent multiple scans
+        setLoading(true);
+        setCardData(null);
         try {
             await NfcManager.requestTechnology([NfcTech.IsoDep]);
-            const commandSet = commands[type];
-            const responses = await transceiveCommands(commandSet);
-            const processedCardData = await processCardData(responses, type);
-            console.log(processedCardData)
+            let processedCardData = await attemptReadCard('visa');
+            if (!processedCardData) {
+                processedCardData = await attemptReadCard('mastercard');
+            }
             setCardData(processedCardData);
         } catch (error) {
             console.error(error);
         } finally {
             NfcManager.cancelTechnologyRequest();
+            setLoading(false);
+        }
+    };
+
+    const attemptReadCard = async (type) => {
+        try {
+            const commandSet = commands[type];
+            const responses = await transceiveCommands(commandSet);
+            const processedCardData = await processCardData(responses, type);
+            return processedCardData;
+        } catch (error) {
+            console.error(`Failed to read ${type} card:`, error);
+            return null;
         }
     };
 
@@ -70,56 +86,56 @@ export default function HomeScreen() {
     const toHexString = (byteArr) => byteArr.reduce((acc, byte) => acc + ('00' + byte.toString(16).toUpperCase()).slice(-2), '');
 
     const getCardInfoVisa = (responses) => {
-        let res
-        let end = false
+        let res;
+        let end = false;
         for (let i = 0; i < responses.length; i++) {
-            const r = responses[i]
+            const r = responses[i];
             if (r.tag === "77" && r.value && r.value.length > 0) {
                 for (let j = 0; j < r.value.length; j++) {
-                    const e = r.value[j]
+                    const e = r.value[j];
                     if (e.tag === "57" && e.value) {
-                        const parts = e.value.split("D")
+                        const parts = e.value.split("D");
                         if (parts.length > 1) {
                             res = {
                                 card: parts[0],
                                 exp: parts[1].substring(0, 4)
-                            }
-                            end = true
+                            };
+                            end = true;
                         }
                     }
 
                     if (end) {
-                        break
+                        break;
                     }
                 }
 
                 if (end) {
-                    break
+                    break;
                 }
             }
         }
-        return res
+        return res;
     };
 
     const getCardInfoMasterCard = (responses) => {
-        let res
-        let end = false
+        let res;
+        let end = false;
         for (let i = 0; i < responses.length; i++) {
-            const r = responses[i]
+            const r = responses[i];
             if (r.tag === "70" && r.value && r.value.length > 0) {
                 for (let j = 0; j < r.value.length; j++) {
-                    const e = r.value[j]
+                    const e = r.value[j];
                     if (e.tag === "5A" && e.value) {
                         if (!res) {
                             res = {
                                 card: e.value
-                            }
+                            };
                         } else {
-                            res.card = e.value
+                            res.card = e.value;
                         }
 
                         if (res.card && res.exp) {
-                            end = true
+                            end = true;
                         }
                     }
 
@@ -127,27 +143,27 @@ export default function HomeScreen() {
                         if (!res) {
                             res = {
                                 exp: e.value
-                            }
+                            };
                         } else {
-                            res.exp = e.value
+                            res.exp = e.value;
                         }
 
                         if (res.card && res.exp) {
-                            end = true
+                            end = true;
                         }
                     }
 
                     if (end) {
-                        break
+                        break;
                     }
                 }
 
                 if (end) {
-                    break
+                    break;
                 }
             }
         }
-        return res
+        return res;
     };
 
     return (
@@ -157,20 +173,14 @@ export default function HomeScreen() {
             </View>
             <View style={styles.contentContainer}>
                 <Text style={styles.titleText}>Welcome to NFC Reader!</Text>
-                <View style={styles.buttonContainer}>
-                    <TouchableOpacity onPress={() => setTech(NfcTech.IsoDep)} style={tech === NfcTech.IsoDep ? styles.techButtonSelected : styles.techButton}>
-                        <Text>Use IsoDep</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => setTech(NfcTech.NfcA)} style={tech === NfcTech.NfcA ? styles.techButtonSelected : styles.techButton}>
-                        <Text>Use NfcA</Text>
-                    </TouchableOpacity>
-                </View>
-                <Button title={`Scan Visa Card (${tech})`} onPress={() => readCreditCard('visa')} />
-                <Button title={`Scan Mastercard Card (${tech})`} onPress={() => readCreditCard('mastercard')} />
+                <TouchableOpacity style={styles.scanButton} onPress={readCreditCard} disabled={loading}>
+                    <Text style={styles.scanButtonText}>Scan Card</Text>
+                </TouchableOpacity>
+                {loading && <ActivityIndicator size="large" color="#6200ee" />}
                 {cardData && (
                     <View style={styles.cardDataContainer}>
                         <Text style={styles.cardDataText}>Card Number: {cardData.card}</Text>
-                        <Text>Expiration: {cardData.exp}</Text>
+                        <Text style={styles.cardDataText}>Expiration: {cardData.exp}</Text>
                     </View>
                 )}
             </View>
@@ -181,49 +191,55 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+        backgroundColor: '#f0f0f0',
     },
     headerContainer: {
-        backgroundColor: '#A1CEDC',
+        backgroundColor: '#6200ee',
+        paddingVertical: 20,
+        alignItems: 'center',
     },
     reactLogo: {
-        height: 178,
-        width: 290,
-        alignSelf: 'center',
-        marginVertical: 20,
+        height: 100,
+        width: 100,
+        resizeMode: 'contain',
     },
     contentContainer: {
-        padding: 10,
+        padding: 20,
+        alignItems: 'center',
     },
     titleText: {
-        fontSize: 22,
+        fontSize: 28,
         fontWeight: 'bold',
-        marginBottom: 20,
+        marginBottom: 40,
+        color: '#333',
     },
-    buttonContainer: {
-        flexDirection: 'row',
-        marginBottom: 20,
+    scanButton: {
+        backgroundColor: '#6200ee',
+        paddingVertical: 15,
+        paddingHorizontal: 30,
+        borderRadius: 8,
+        marginBottom: 40,
+        opacity: 1,
     },
-    techButton: {
-        padding: 10,
-        marginHorizontal: 5,
-        backgroundColor: '#ddd',
-        borderRadius: 5,
-    },
-    techButtonSelected: {
-        padding: 10,
-        marginHorizontal: 5,
-        backgroundColor: '#bbb',
-        borderRadius: 5,
-        borderWidth: 2,
-        borderColor: '#888',
+    scanButtonText: {
+        color: '#fff',
+        fontSize: 20,
+        fontWeight: 'bold',
     },
     cardDataContainer: {
-        marginTop: 10,
-        padding: 10,
-        backgroundColor: '#f0f0f0',
-        borderRadius: 5,
+        padding: 20,
+        backgroundColor: '#fff',
+        borderRadius: 10,
+        shadowColor: '#000',
+        shadowOpacity: 0.2,
+        shadowOffset: { width: 0, height: 2 },
+        shadowRadius: 5,
+        alignItems: 'center',
     },
     cardDataText: {
+        fontSize: 24,
         fontWeight: 'bold',
+        marginBottom: 10,
+        color: '#333',
     },
 });
